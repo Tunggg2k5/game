@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { writeAudit } from "@/lib/audit";
 import { connectMongo } from "@/lib/mongodb";
+import { appointmentStatuses } from "@/lib/types";
 import type { Role } from "@/lib/types";
 import { Appointment } from "@/models/Appointment";
 import { DentalService } from "@/models/DentalService";
@@ -40,11 +41,16 @@ const patchAppointmentSchema = z.object({
     "reschedule",
     "noShow",
     "assignNurse",
+    "setStatus",
+    "review",
     "note",
   ]),
+  status: z.enum(appointmentStatuses).optional(),
   appointmentDate: z.string().optional(),
   startTime: z.string().optional(),
   nurse: z.string().optional().or(z.literal("")),
+  rating: z.coerce.number().min(1).max(5).optional(),
+  review: z.string().optional().or(z.literal("")),
   reason: z.string().optional().or(z.literal("")),
   notes: z.string().optional().or(z.literal("")),
 });
@@ -67,11 +73,12 @@ function roleCanPatch(role: Role, action: string) {
     "reschedule",
     "noShow",
     "assignNurse",
+    "setStatus",
     "note",
   ];
   const dentistActions = ["startTreatment", "complete", "note"];
-  const nurseActions = ["startTreatment", "note"];
-  const patientActions = ["cancel", "reschedule", "note"];
+  const nurseActions = ["startTreatment", "complete", "note"];
+  const patientActions = ["cancel", "reschedule", "review", "note"];
 
   if (role === "admin") return true;
   if (role === "receptionist") return receptionistActions.includes(action);
@@ -97,6 +104,14 @@ async function assertSlotAvailable(
 
   return !conflict;
 }
+
+const receptionistManagedStatuses = [
+  "checked_in",
+  "no_show",
+  "in_treatment",
+  "completed",
+  "cancelled",
+] as const;
 
 export async function GET(request: Request) {
   const guard = await authGuard();
@@ -245,6 +260,7 @@ export async function PATCH(request: Request) {
         }
         appointment.status = "cancelled";
         appointment.cancellationReason = body.reason;
+        appointment.cancellationActorRole = guard.session.role;
         break;
       case "reschedule": {
         if (!body.appointmentDate || !body.startTime) {
@@ -282,6 +298,45 @@ export async function PATCH(request: Request) {
         break;
       case "assignNurse":
         appointment.nurse = body.nurse || undefined;
+        break;
+      case "setStatus":
+        if (!body.status) return fail("Thiếu trạng thái mới.", 400);
+        if (!receptionistManagedStatuses.includes(body.status as (typeof receptionistManagedStatuses)[number])) {
+          return fail("Lễ tân chỉ được đổi sang trạng thái có mặt, vắng mặt, đang khám, hoàn tất hoặc đã hủy.", 400);
+        }
+        if (
+          guard.session.role === "receptionist" &&
+          appointment.status === "cancelled" &&
+          appointment.cancellationActorRole === "patient"
+        ) {
+          return fail("Bệnh nhân đã hủy lịch nên lễ tân không được đổi trạng thái nữa.", 409);
+        }
+        appointment.status = body.status;
+        if (body.status === "checked_in") appointment.checkInAt = appointment.checkInAt || new Date();
+        if (body.status === "no_show") {
+          appointment.noShowAt = appointment.noShowAt || new Date();
+          appointment.noShowReason = body.reason || appointment.noShowReason;
+        }
+        if (body.status === "completed") appointment.completedAt = appointment.completedAt || new Date();
+        if (body.status === "cancelled") {
+          appointment.cancellationReason = body.reason || appointment.cancellationReason;
+          appointment.cancellationActorRole = guard.session.role;
+        } else if (appointment.cancellationActorRole !== "patient") {
+          appointment.cancellationReason = undefined;
+          appointment.cancellationActorRole = undefined;
+        }
+        break;
+      case "review":
+        if (guard.session.role !== "patient") {
+          return fail("Chỉ bệnh nhân mới được đánh giá lịch khám.", 403);
+        }
+        if (appointment.status !== "completed") {
+          return fail("Chỉ được đánh giá sau khi ca khám hoàn tất.", 409);
+        }
+        if (!body.rating) return fail("Thiếu số sao đánh giá.", 400);
+        appointment.patientRating = body.rating;
+        appointment.patientReview = body.review;
+        appointment.reviewedAt = new Date();
         break;
       case "note":
         appointment.notes = body.notes;

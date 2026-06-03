@@ -25,7 +25,11 @@ const appointmentSchema = new Schema(
     symptoms: { type: String, trim: true },
     notes: { type: String, trim: true },
     cancellationReason: { type: String, trim: true },
+    cancellationActorRole: { type: String, trim: true },
     noShowReason: { type: String, trim: true },
+    patientRating: { type: Number, min: 1, max: 5 },
+    patientReview: { type: String, trim: true },
+    reviewedAt: { type: Date },
     rescheduledFrom: {
       appointmentDate: Date,
       startTime: String,

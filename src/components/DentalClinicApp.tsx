@@ -91,6 +91,10 @@ type Appointment = {
   price: number;
   symptoms?: string;
   notes?: string;
+  cancellationActorRole?: Role;
+  patientRating?: number;
+  patientReview?: string;
+  reviewedAt?: string;
 };
 
 type Treatment = {
@@ -169,6 +173,7 @@ type ViewKey =
   | "overview"
   | "booking"
   | "appointments"
+  | "clinicFlow"
   | "schedule"
   | "patients"
   | "treatments"
@@ -199,6 +204,36 @@ const weekdays = [
   "Thứ 7",
 ];
 
+const receptionistStatusOptions: {
+  value: AppointmentStatus;
+  label: string;
+}[] = [
+  { value: "checked_in", label: "Có mặt" },
+  { value: "no_show", label: "Vắng mặt" },
+  { value: "in_treatment", label: "Đang khám" },
+  { value: "completed", label: "Hoàn tất" },
+  { value: "cancelled", label: "Đã hủy" },
+];
+
+const patientSlotTimes = [
+  "07:00",
+  "07:30",
+  "08:00",
+  "08:30",
+  "09:00",
+  "09:30",
+  "10:00",
+  "10:30",
+  "13:30",
+  "14:00",
+  "14:30",
+  "15:00",
+  "15:30",
+  "16:00",
+  "16:30",
+  "17:00",
+];
+
 const demoAccounts: { email: string; role: Role; label: string }[] = [
   { email: "admin@dental.local", role: "admin", label: "Quản lý" },
   { email: "receptionist@dental.local", role: "receptionist", label: "Lễ tân" },
@@ -227,7 +262,8 @@ const navItems: Record<Role, { key: ViewKey; label: string; icon: typeof LayoutD
   ],
   receptionist: [
     { key: "overview", label: "Tổng quan", icon: LayoutDashboard },
-    { key: "appointments", label: "Xác nhận lịch", icon: ClipboardList },
+    { key: "appointments", label: "Lịch hẹn", icon: ClipboardList },
+    { key: "clinicFlow", label: "Điều phối", icon: ClipboardCheck },
     { key: "booking", label: "Tạo lịch", icon: CalendarDays },
     { key: "patients", label: "Bệnh nhân", icon: Users },
     { key: "reports", label: "Báo cáo", icon: BadgeDollarSign },
@@ -246,6 +282,7 @@ const navItems: Record<Role, { key: ViewKey; label: string; icon: typeof LayoutD
   admin: [
     { key: "overview", label: "Tổng quan", icon: LayoutDashboard },
     { key: "appointments", label: "Lịch hẹn", icon: ClipboardList },
+    { key: "clinicFlow", label: "Điều phối", icon: ClipboardCheck },
     { key: "master", label: "Master data", icon: ShieldCheck },
     { key: "schedule", label: "Lịch nha sĩ", icon: Clock3 },
     { key: "nurse", label: "Y tá", icon: HeartPulse },
@@ -763,6 +800,21 @@ export default function DentalClinicApp() {
                   }
                 />
               ) : null}
+              {activeView === "clinicFlow" ? (
+                <ClinicFlowPanel
+                  appointments={appointments}
+                  dentists={dentists}
+                  busy={busy}
+                  onAction={(payload) =>
+                    runMutation("Đã cập nhật trạng thái phòng khám.", async () => {
+                      await apiFetch("/api/appointments", {
+                        method: "PATCH",
+                        body: JSON.stringify(payload),
+                      });
+                    })
+                  }
+                />
+              ) : null}
               {activeView === "schedule" ? (
                 <SchedulePanel
                   me={me}
@@ -1258,6 +1310,63 @@ function BookingPanel({
     notes: "",
   });
 
+  if (me.role === "patient") {
+    return (
+      <Panel title="Đặt lịch khám" subtitle="Chọn giờ khám phù hợp" icon={CalendarDays}>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Field label="Dịch vụ">
+            <select
+              className={inputClass()}
+              value={form.service}
+              onChange={(event) => setForm({ ...form, service: event.target.value })}
+            >
+              {services.filter((service) => service.active).map((service) => (
+                <option key={service._id} value={service._id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Nha sĩ">
+            <select
+              className={inputClass()}
+              value={form.dentist}
+              onChange={(event) => setForm({ ...form, dentist: event.target.value })}
+            >
+              {dentists.map((dentist) => (
+                <option key={dentist._id} value={dentist._id}>
+                  {dentist.fullName}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Ngày khám">
+            <input
+              className={inputClass()}
+              type="date"
+              value={form.appointmentDate}
+              onChange={(event) => setForm({ ...form, appointmentDate: event.target.value })}
+            />
+          </Field>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+          {patientSlotTimes.map((time) => (
+            <button
+              key={time}
+              type="button"
+              disabled={busy || !form.service || !form.dentist}
+              onClick={() => onBook({ ...form, startTime: time })}
+              className="min-h-20 rounded-lg border border-[#cbd8e3] bg-white px-3 text-center text-2xl font-bold text-[#176b87] shadow-sm transition hover:border-[#176b87] hover:bg-[#eef8f8] disabled:opacity-50"
+            >
+              {time}
+            </button>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="Đặt lịch khám" subtitle="UCA09, UCA14" icon={CalendarDays}>
       <form
@@ -1267,21 +1376,19 @@ function BookingPanel({
           onBook(form);
         }}
       >
-        {me.role !== "patient" ? (
-          <Field label="Bệnh nhân">
-            <select
-              className={inputClass()}
-              value={form.patient}
-              onChange={(event) => setForm({ ...form, patient: event.target.value })}
-            >
-              {patients.map((patient) => (
-                <option key={patient._id} value={patient._id}>
-                  {patient.fullName}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : null}
+        <Field label="Bệnh nhân">
+          <select
+            className={inputClass()}
+            value={form.patient}
+            onChange={(event) => setForm({ ...form, patient: event.target.value })}
+          >
+            {patients.map((patient) => (
+              <option key={patient._id} value={patient._id}>
+                {patient.fullName}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Dịch vụ">
           <select
             className={inputClass()}
@@ -1364,7 +1471,7 @@ function AppointmentsPanel({
   quickNurse: string;
   setQuickNurse: (value: string) => void;
   busy: boolean;
-  onAction: (payload: Record<string, string>) => void;
+  onAction: (payload: Record<string, string | number>) => void;
 }) {
   function askReason(label: string) {
     return window.prompt(label) || "";
@@ -1378,13 +1485,29 @@ function AppointmentsPanel({
     onAction({ _id: appointment._id, action: "reschedule", appointmentDate, startTime });
   }
 
+  function askReview(appointment: Appointment) {
+    const rating = Number(window.prompt("Số sao đánh giá (1-5)", "5"));
+    if (!rating || rating < 1 || rating > 5) return;
+    const review = window.prompt("Nhận xét", "") || "";
+    onAction({ _id: appointment._id, action: "review", rating, review });
+  }
+
+  const displayedAppointments =
+    me.role === "receptionist"
+      ? appointments.filter((appointment) => appointment.status === "pending")
+      : appointments;
+
   return (
     <Panel
-      title="Quản lý lịch hẹn"
-      subtitle="UCA10-UCA15, UCA27-UCA29"
+      title={me.role === "receptionist" ? "Lịch chờ xác nhận" : "Quản lý lịch hẹn"}
+      subtitle={
+        me.role === "receptionist"
+          ? "Chỉ hiển thị lịch bệnh nhân đang chờ lễ tân xác nhận"
+          : "UCA10-UCA15, UCA27-UCA29"
+      }
       icon={ClipboardList}
       action={
-        ["admin", "receptionist"].includes(me.role) ? (
+        me.role === "admin" ? (
           <select
             className={inputClass()}
             value={quickNurse}
@@ -1410,12 +1533,14 @@ function AppointmentsPanel({
               <th className="border-b border-[#d8e2ea] py-2 pr-3">Nha sĩ</th>
               <th className="border-b border-[#d8e2ea] py-2 pr-3">Y tá</th>
               <th className="border-b border-[#d8e2ea] py-2 pr-3">Dịch vụ</th>
-              <th className="border-b border-[#d8e2ea] py-2 pr-3">Trạng thái</th>
+              {me.role !== "receptionist" ? (
+                <th className="border-b border-[#d8e2ea] py-2 pr-3">Trạng thái</th>
+              ) : null}
               <th className="border-b border-[#d8e2ea] py-2 pr-3">Thao tác</th>
             </tr>
           </thead>
           <tbody>
-            {appointments.map((appointment) => (
+            {displayedAppointments.map((appointment) => (
               <tr key={appointment._id}>
                 <td className="border-b border-[#edf1f5] py-3 pr-3">{formatDate(appointment.appointmentDate)}</td>
                 <td className="border-b border-[#edf1f5] py-3 pr-3 font-mono">{appointment.startTime}-{appointment.endTime}</td>
@@ -1423,11 +1548,13 @@ function AppointmentsPanel({
                 <td className="border-b border-[#edf1f5] py-3 pr-3">{userName(appointment.dentist)}</td>
                 <td className="border-b border-[#edf1f5] py-3 pr-3">{userName(appointment.nurse)}</td>
                 <td className="border-b border-[#edf1f5] py-3 pr-3">{serviceName(appointment.service)}</td>
-                <td className="border-b border-[#edf1f5] py-3 pr-3">
-                  <span className={`rounded-md border px-2 py-1 text-xs font-bold ${statusClass(appointment.status)}`}>
-                    {statusLabels[appointment.status]}
-                  </span>
-                </td>
+                {me.role !== "receptionist" ? (
+                  <td className="border-b border-[#edf1f5] py-3 pr-3">
+                    <span className={`rounded-md border px-2 py-1 text-xs font-bold ${statusClass(appointment.status)}`}>
+                      {statusLabels[appointment.status]}
+                    </span>
+                  </td>
+                ) : null}
                 <td className="border-b border-[#edf1f5] py-3 pr-3">
                   <div className="flex flex-wrap gap-2">
                     {["admin", "receptionist"].includes(me.role) && appointment.status === "pending" ? (
@@ -1438,6 +1565,11 @@ function AppointmentsPanel({
                         <Button icon={XCircle} variant="danger" disabled={busy} onClick={() => onAction({ _id: appointment._id, action: "reject", reason: askReason("Lý do từ chối") })}>
                           Từ chối
                         </Button>
+                        {me.role === "receptionist" ? (
+                          <Button icon={RefreshCcw} variant="ghost" disabled={busy} onClick={() => askReschedule(appointment)}>
+                            Dời
+                          </Button>
+                        ) : null}
                       </>
                     ) : null}
                     {["admin", "receptionist"].includes(me.role) && appointment.status === "confirmed" ? (
@@ -1445,7 +1577,7 @@ function AppointmentsPanel({
                         Check-in
                       </Button>
                     ) : null}
-                    {["admin", "receptionist"].includes(me.role) && quickNurse ? (
+                    {me.role === "admin" && quickNurse ? (
                       <Button icon={HeartPulse} variant="secondary" disabled={busy} onClick={() => onAction({ _id: appointment._id, action: "assignNurse", nurse: quickNurse })}>
                         Gán y tá
                       </Button>
@@ -1455,12 +1587,12 @@ function AppointmentsPanel({
                         Điều trị
                       </Button>
                     ) : null}
-                    {["admin", "dentist"].includes(me.role) && appointment.status === "in_treatment" ? (
+                    {["admin", "dentist", "nurse"].includes(me.role) && appointment.status === "in_treatment" ? (
                       <Button icon={CheckCircle2} variant="secondary" disabled={busy} onClick={() => onAction({ _id: appointment._id, action: "complete" })}>
                         Hoàn tất
                       </Button>
                     ) : null}
-                    {["admin", "receptionist", "patient"].includes(me.role) && ["pending", "confirmed"].includes(appointment.status) ? (
+                    {["admin", "patient"].includes(me.role) && ["pending", "confirmed"].includes(appointment.status) ? (
                       <>
                         <Button icon={RefreshCcw} variant="ghost" disabled={busy} onClick={() => askReschedule(appointment)}>
                           Dời
@@ -1470,6 +1602,17 @@ function AppointmentsPanel({
                         </Button>
                       </>
                     ) : null}
+                    {me.role === "patient" && appointment.status === "completed" ? (
+                      appointment.patientRating ? (
+                        <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
+                          Đã đánh giá {appointment.patientRating}/5
+                        </span>
+                      ) : (
+                        <Button icon={NotebookPen} variant="secondary" disabled={busy} onClick={() => askReview(appointment)}>
+                          Đánh giá
+                        </Button>
+                      )
+                    ) : null}
                     {["admin", "receptionist"].includes(me.role) && ["confirmed", "checked_in"].includes(appointment.status) ? (
                       <Button icon={Bell} variant="ghost" disabled={busy} onClick={() => onAction({ _id: appointment._id, action: "noShow", reason: askReason("Ghi chú no-show") })}>
                         No-show
@@ -1477,6 +1620,166 @@ function AppointmentsPanel({
                     ) : null}
                   </div>
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function ClinicFlowPanel({
+  appointments,
+  dentists,
+  busy,
+  onAction,
+}: {
+  appointments: Appointment[];
+  dentists: AppUser[];
+  busy: boolean;
+  onAction: (payload: Record<string, string>) => void;
+}) {
+  const [selectedDate, setSelectedDate] = useState(todayInput());
+  const activeStatuses = ["confirmed", "checked_in", "in_treatment", "completed", "no_show", "cancelled"];
+  const dayAppointments = appointments.filter(
+    (appointment) =>
+      activeStatuses.includes(appointment.status) &&
+      appointment.appointmentDate.slice(0, 10) === selectedDate,
+  );
+  const shownDentists = dentists.filter((dentist) =>
+    dayAppointments.some((appointment) => objectId(appointment.dentist) === dentist._id),
+  );
+  const boardDentists = shownDentists.length ? shownDentists : dentists;
+  const slots = Array.from(new Set(dayAppointments.map((appointment) => appointment.startTime))).sort();
+  const visibleSlots = slots.length ? slots : patientSlotTimes.slice(0, 10);
+
+  function statusLabel(status: AppointmentStatus) {
+    const match = receptionistStatusOptions.find((option) => option.value === status);
+    return match?.label || statusLabels[status];
+  }
+
+  return (
+    <Panel
+      title="Điều phối phòng khám"
+      subtitle="Lịch đã được lễ tân chấp nhận, quản lý theo nha sĩ và slot"
+      icon={ClipboardCheck}
+      action={
+        <Field label="Ngày">
+          <input
+            className={inputClass()}
+            type="date"
+            value={selectedDate}
+            onChange={(event) => setSelectedDate(event.target.value)}
+          />
+        </Field>
+      }
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr className="text-left text-[#5e7188]">
+              <th className="sticky left-0 z-10 border-b border-[#d8e2ea] bg-white py-3 pr-3">
+                Slot
+              </th>
+              {boardDentists.map((dentist) => (
+                <th key={dentist._id} className="border-b border-[#d8e2ea] px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    {dentist.avatarUrl ? (
+                      <img src={dentist.avatarUrl} alt="" className="h-8 w-8 rounded-md object-cover" />
+                    ) : (
+                      <div className="h-8 w-8 rounded-md bg-[#dbe9ee]" />
+                    )}
+                    <div>
+                      <div className="font-bold text-[#172033]">{dentist.fullName}</div>
+                      <div className="text-xs text-[#6f8195]">{dentist.specialty}</div>
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleSlots.map((slot) => (
+              <tr key={slot}>
+                <td className="sticky left-0 z-10 border-b border-[#edf1f5] bg-white py-3 pr-3 align-top font-mono text-base font-bold text-[#176b87]">
+                  {slot}
+                </td>
+                {boardDentists.map((dentist) => {
+                  const cellAppointments = dayAppointments.filter(
+                    (appointment) =>
+                      appointment.startTime === slot &&
+                      objectId(appointment.dentist) === dentist._id,
+                  );
+
+                  return (
+                    <td key={dentist._id} className="min-w-[240px] border-b border-[#edf1f5] px-3 py-3 align-top">
+                      {cellAppointments.length ? (
+                        <div className="grid gap-2">
+                          {cellAppointments.map((appointment) => {
+                            const lockedByPatientCancel =
+                              appointment.status === "cancelled" &&
+                              appointment.cancellationActorRole === "patient";
+
+                            return (
+                              <div
+                                key={appointment._id}
+                                className="rounded-lg border border-[#d8e2ea] bg-[#f7fafb] p-3"
+                              >
+                                <div className="font-bold text-[#172033]">{userName(appointment.patient)}</div>
+                                <div className="mt-1 text-xs text-[#5e7188]">
+                                  {serviceName(appointment.service)} · {appointment.startTime}-{appointment.endTime}
+                                </div>
+                                <div className="mt-3 grid gap-2">
+                                  <select
+                                    className={inputClass()}
+                                    value={
+                                      receptionistStatusOptions.some((option) => option.value === appointment.status)
+                                        ? appointment.status
+                                        : "checked_in"
+                                    }
+                                    disabled={busy || lockedByPatientCancel}
+                                    onChange={(event) => {
+                                      const nextStatus = event.target.value as AppointmentStatus;
+                                      const reason =
+                                        nextStatus === "cancelled"
+                                          ? window.prompt("Lý do hủy lịch", "") || ""
+                                          : "";
+                                      onAction({
+                                        _id: appointment._id,
+                                        action: "setStatus",
+                                        status: nextStatus,
+                                        reason,
+                                      });
+                                    }}
+                                  >
+                                    {receptionistStatusOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <span className={`w-fit rounded-md border px-2 py-1 text-xs font-bold ${statusClass(appointment.status)}`}>
+                                    {statusLabel(appointment.status)}
+                                  </span>
+                                  {lockedByPatientCancel ? (
+                                    <span className="text-xs font-semibold text-rose-700">
+                                      Bệnh nhân đã hủy, lễ tân không thể đổi lại.
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-[#d8e2ea] p-3 text-xs text-[#8494a8]">
+                          Trống
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
